@@ -568,8 +568,6 @@ void init()
     PcaTest(src, src_pca);
     PcaTest(tgt, tgt_pca);
 
-    src_pca.
-
     qDebug() << "Angle : " << src_pca.Angle(tgt_pca) * 180 / PI;
 
     vec2euler(srcMatrix, srcAngles);
