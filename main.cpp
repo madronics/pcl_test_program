@@ -58,11 +58,10 @@ struct eulerAngles
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-PointCloud<PointXYZ>::Ptr src, tgt, src_rot, result, temp, src_mir;
+PointCloud<PointXYZ>::Ptr src, tgt, src_rot, tgt_rot, src_rot_rot, tempCloud;
 QVector<point> srcPoints, tgtPoints, rotPoints;
 
-gp_Ax3 src_ax, tgt_ax, src_pca_ax, tgt_pca_ax;
-eulerAngles srcAngles, tgtAngles, rotAngles, outAngles;
+gp_Ax3 src_pca_ax, tgt_pca_ax, src_rot_pca_ax;
 
 ///////////////////////////////////////////////////////////////////////////////////
 
@@ -339,9 +338,9 @@ void PcaTest(PointCloud<PointXYZ>::Ptr &points, gp_Ax3 &ax_pca)
     double basis2_z = eigVectors[2][2];
 
     ax_pca.SetLocation(gp_Pnt(mean_x, mean_y, mean_z));
-    ax_pca.SetDirection(gp_Dir(basis2_x, basis2_y, basis2_z));
-    ax_pca.SetXDirection(gp_Dir(basis0_x, basis0_y, basis0_z));
-    ax_pca.SetYDirection(gp_Dir(basis1_x, basis1_y, basis1_z));
+    ax_pca.SetDirection(gp_Dir(basis0_x, basis0_y, basis0_z));
+    ax_pca.SetXDirection(gp_Dir(basis1_x, basis1_y, basis1_z));
+    ax_pca.SetYDirection(gp_Dir(basis2_x, basis2_y, basis2_z));
 }
 
 void vec2euler(QMatrix3x3* ptrMatrix, eulerAngles &e)
@@ -399,25 +398,6 @@ void CalculateError(PointCloud<PointXYZ>::Ptr& src, PointCloud<PointXYZ>::Ptr& t
     qDebug() << "***********************************************************";
 }
 
-double CalculateMaxError(PointCloud<PointXYZ>::Ptr& src, PointCloud<PointXYZ>::Ptr& tgt)
-{
-    if(src->size() != tgt->size())
-        throw "Hatalı Değer Girildi";
-
-    QVector<double> distances;
-
-    auto size = src->size();
-    for(int i = 0; i < size; i++)
-    {
-        PointXYZ *srcPoint = src->data() + i;
-        PointXYZ *tgtPoint = tgt->data() + i;
-        double distance = sqrt(pow(srcPoint->x - tgtPoint->x, 2) + pow(srcPoint->y - tgtPoint->y, 2) + pow(srcPoint->z - tgtPoint->z, 2));
-        distances.push_back(distance);
-    }
-
-    return MathStatistics::max(distances);
-}
-
 void TransformationPointCloud(PointCloud<PointXYZ>::Ptr &source, PointCloud<PointXYZ>::Ptr &target, gp_Trsf &transform)
 {
     target->clear();
@@ -431,48 +411,6 @@ void TransformationPointCloud(PointCloud<PointXYZ>::Ptr &source, PointCloud<Poin
     }
 }
 
-gp_Trsf* GetTransformOfPointCloud(PointCloud<PointXYZ>::Ptr &source, PointCloud<PointXYZ>::Ptr &target)
-{
-    PointCloud<PointXYZ>::Ptr temp, temp2;
-    temp.reset(new PointCloud<PointXYZ>());
-    temp2.reset(new PointCloud<PointXYZ>());
-    gp_Ax3 source_pca, target_pca;
-    PcaTest(source, source_pca);
-    PcaTest(target, target_pca);
-
-    gp_Trsf trsf, trsf_rot;
-    gp_Trsf *ret = new gp_Trsf();
-    trsf.SetDisplacement(source_pca, target_pca);
-    TransformationPointCloud(source, temp, trsf);
-
-    double min_error = CalculateMaxError(temp, target);
-
-    for (int i = 0; i < 360; i += 90)
-    {
-        for (int j = 0; j < 360; j += 90)
-        {
-                gp_Trsf t;
-                t.SetRotation(gp_Ax1(target_pca.Location(), target_pca.XDirection()), j * PI / 180);
-                t.SetRotation(gp_Ax1(target_pca.Location(), target_pca.YDirection()), i * PI / 180);
-
-                TransformationPointCloud(temp, temp2, t);
-
-                if(min_error > CalculateMaxError(temp2, target))
-                {
-                    min_error = CalculateMaxError(temp2, target);
-                    trsf_rot = t;
-                }
-        }
-    }
-
-    qDebug() << 5;
-
-    *ret *= trsf * trsf_rot;
-
-    qDebug() << 6;
-    return ret;
-}
-
 void init()
 {
     QString bunnyPath = "E:\\Codes\\Dataset\\Bunny.ply";
@@ -481,23 +419,21 @@ void init()
     src.reset (new PointCloud<PointXYZ>);
     tgt.reset (new PointCloud<PointXYZ>);
     src_rot.reset (new PointCloud<PointXYZ>);
-    result.reset (new PointCloud<PointXYZ>);
-    temp.reset (new PointCloud<PointXYZ>);
-    src_mir.reset (new PointCloud<PointXYZ>);
+    tgt_rot.reset (new PointCloud<PointXYZ>);
+    src_rot_rot.reset (new PointCloud<PointXYZ>);
+    tempCloud.reset (new PointCloud<PointXYZ>);
 
 
     reader.read(bunnyPath.toStdString(), *src);
 
-    float angle = 180;
-    gp_Vec vec(1, 1, 0);
+    float angle = 320;
+    gp_Vec vec(0, -0.5, -0.75);
 
     RotatePoints(src, tgt, angle, vec);
 
-    qDebug() << 1;
+    *tempCloud = *tgt;
 
-    *temp = *tgt;
-
-    AddGausssianNoise(temp, tgt, 0.0, 0.0025);
+    AddGausssianNoise(tempCloud, tgt, 0.0, 0.0035);
 
     savePLYFileBinary("src.ply", *src);
     savePLYFileBinary("tgt.ply", *tgt);
@@ -506,39 +442,37 @@ void init()
     PcaTest(src, src_pca_ax);
     PcaTest(tgt, tgt_pca_ax);
 
-    qDebug() << "Angle : " << src_pca_ax.Angle(tgt_pca_ax) * 180 / PI;
+    qDebug() << "src_pca_ax.Angle(tgt_pca_ax) : " << src_pca_ax.Angle(tgt_pca_ax) * 180 / PI;
 
     qDebug() << "Source Targer Error";
     CalculateError(src, tgt);
 
     gp_Trsf trsf;
     trsf.SetDisplacement(src_pca_ax, tgt_pca_ax);
-//    trsf.SetDisplacement(tgt_pca_ax, src_pca_ax);
-//    trsf.SetTransformation(src_pca_ax, tgt_pca_ax);
-//    trsf.SetTransformation(tgt_pca_ax, src_pca_ax);
-
     TransformationPointCloud(src, src_rot, trsf);
 
-    gp_Trsf* trsf3 = GetTransformOfPointCloud(src, tgt);
-
     gp_Trsf trsf2;
-//    trsf2.SetMirror(src_pca_ax.Location());
-    trsf2.SetMirror(src_pca_ax.Axis());
+    trsf2.SetDisplacement(tgt_pca_ax, src_pca_ax);
+    TransformationPointCloud(tgt, tgt_rot, trsf2);
 
-    TransformationPointCloud(src_rot, src_mir, trsf2);
-
-    TransformationPointCloud(src, temp, *trsf3);
-
-
-    savePLYFileBinary("src_repair.ply", *temp);
     savePLYFileBinary("src_rot.ply", *src_rot);
-    savePLYFileBinary("src_mir.ply", *src_mir);
+    savePLYFileBinary("tgt_rot.ply", *tgt_rot);
+
+    PcaTest(src_rot, src_rot_pca_ax);
+
+    gp_Trsf trsf3;
+    trsf3.SetDisplacement(src_rot_pca_ax, tgt_pca_ax);
+    TransformationPointCloud(src_rot, src_rot_rot, trsf3);
+
+    savePLYFileBinary("src_rot_rot.ply", *src_rot_rot);
+
+    qDebug() << "src_rot_pca_ax.Angle(tgt_rot_pca_ax) : " << src_rot_pca_ax.Angle(tgt_pca_ax) * 180 / PI;
 
     qDebug() << "Source Target Error Çevirdikten Sonra";
     CalculateError(src_rot, tgt);
-    qDebug() << "Source Target Error Çevirdikten Mirror Sonra";
-    CalculateError(src_mir, tgt);
-    *src = *src_rot;
+
+    *src = *src_rot_rot;
+
 }
 
 ////////////////////////////////////////////////////////////////////////////////
