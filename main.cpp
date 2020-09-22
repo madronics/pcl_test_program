@@ -33,6 +33,7 @@
 #include <gp_Ax3.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Vec.hxx>
+#include <gp_Quaternion.hxx>
 
 #include <random>
 
@@ -43,6 +44,8 @@ using namespace pcl::io;
 using namespace pcl::console;
 using namespace pcl::registration;
 ////////////////////////////////////////////////////////////////////////////////
+
+void TransformationPointCloud(PointCloud<PointXYZ>::Ptr &source, PointCloud<PointXYZ>::Ptr &target, gp_Trsf &transform);
 
 struct point
 {
@@ -258,18 +261,20 @@ void RotatePoints(PointCloud<PointXYZ>::Ptr &sourcePoints, PointCloud<PointXYZ>:
 
     trsf.SetRotation(gp_Ax1(gp_Pnt(mean_x, mean_y, mean_z), rotVec), angle / 180 * PI);
 
-    for (auto p: *sourcePoints)
-    {
-        gp_Pnt gpPoint(p.x, p.y, p.z);
+    TransformationPointCloud(sourcePoints, rotatePoints, trsf);
 
-        gpPoint.Transform(trsf);
+//    for (auto p: *sourcePoints)
+//    {
+//        gp_Pnt gpPoint(p.x, p.y, p.z);
 
-        x = gpPoint.X();
-        y = gpPoint.Y();
-        z = gpPoint.Z();
+//        gpPoint.Transform(trsf);
 
-        rotatePoints->push_back(PointXYZ(x, y, z));
-    }
+//        x = gpPoint.X();
+//        y = gpPoint.Y();
+//        z = gpPoint.Z();
+
+//        rotatePoints->push_back(PointXYZ(x, y, z));
+//    }
 }
 
 
@@ -460,11 +465,33 @@ void init()
     float angle = 330;
     gp_Vec vec(1,-2,3);
 
+//    float angle = 330;
+//    gp_Vec vec(1,0,0);
+
     RotatePoints(src, tgt, angle, vec);
+
+    int mean_x = 0;
+    int mean_y = 0;
+    int mean_z = 0;
+
+    for (auto p: *src)
+    {
+        mean_x += p.x;
+        mean_y += p.y;
+        mean_z += p.z;
+    }
+
+    mean_x /= src->size();
+    mean_y /= src->size();
+    mean_z /= src->size();
+
+    gp_Trsf t1;
+
+    t1.SetRotation(gp_Ax1(gp_Pnt(mean_x,mean_y,mean_z), vec), angle / 180 * PI);
 
     *tempCloud = *tgt;
 
-    AddGausssianNoise(tempCloud, tgt, 0.0, 0.0035);
+//    AddGausssianNoise(tempCloud, tgt, 0.0, 0.0035);
 
     savePLYFileBinary("src.ply", *src);
     savePLYFileBinary("tgt.ply", *tgt);
@@ -497,6 +524,42 @@ void init()
 
     gp_Trsf trsf_cal = CalculatePcaTransform(src, tgt);
     TransformationPointCloud(src, src_cal, trsf_cal);
+
+    gp_Quaternion q1 = trsf.GetRotation();
+    gp_Quaternion q2 = t1.GetRotation();
+    gp_Quaternion q3 = trsf_cal.GetRotation();
+    gp_Quaternion q4 = trsf3.GetRotation();
+
+    double A1,B1,C1;
+    double A2,B2,C2;
+    double A3,B3,C3;
+    double A4,B4,C4;
+
+    q1.GetEulerAngles(gp_Intrinsic_ZYX, A1, B1, C1);
+    q2.GetEulerAngles(gp_Intrinsic_ZYX, A2, B2, C2);
+    q3.GetEulerAngles(gp_Intrinsic_ZYX, A3, B3, C3);
+    q4.GetEulerAngles(gp_Intrinsic_ZYX, A4, B4, C4);
+
+    A1 *= 180 / PI;
+    B1 *= 180 / PI;
+    C1 *= 180 / PI;
+
+    A2 *= 180 / PI;
+    B2 *= 180 / PI;
+    C2 *= 180 / PI;
+
+    A3 *= 180 / PI;
+    B3 *= 180 / PI;
+    C3 *= 180 / PI;
+
+    A4 *= 180 / PI;
+    B4 *= 180 / PI;
+    C4 *= 180 / PI;
+
+    qDebug() << "PCA" << trsf.TranslationPart().X() << trsf.TranslationPart().Y() << trsf.TranslationPart().Z() << A1 << B1 << C1;
+    qDebug() << "Target" << t1.TranslationPart().X() << t1.TranslationPart().Y() << t1.TranslationPart().Z() << A2 << B2 << C2;
+    qDebug() << "trsf_cal" << trsf_cal.TranslationPart().X() << trsf_cal.TranslationPart().Y() << trsf_cal.TranslationPart().Z() << A3 << B3 << C3;
+    qDebug() << "trsf3" << trsf3.TranslationPart().X() << trsf3.TranslationPart().Y() << trsf3.TranslationPart().Z() << A4 << B4 << C4;
 
     savePLYFileBinary("src_rot_rot.ply", *src_rot_rot);
     savePLYFileBinary("src_cal.ply", *src_cal);
@@ -531,6 +594,8 @@ estimateKeypoints (const PointCloud<PointXYZ>::Ptr &src,
   // pcl_viewer source_pcd keypoints_src.pcd -ps 1 -ps 10
   savePCDFileBinary ("keypoints_src.pcd", keypoints_src);
   savePCDFileBinary ("keypoints_tgt.pcd", keypoints_tgt);
+  savePLYFileBinary ("keypoints_src.ply", keypoints_src);
+  savePLYFileBinary ("keypoints_tgt.ply", keypoints_tgt);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -557,6 +622,8 @@ estimateNormals (const PointCloud<PointXYZ>::Ptr &src,
   copyPointCloud (normals_tgt, t);
   savePCDFileBinary ("normals_src.pcd", s);
   savePCDFileBinary ("normals_tgt.pcd", t);
+  savePLYFileBinary ("normals_tgt.ply", t);
+  savePLYFileBinary ("normals_src.ply", s);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -587,8 +654,10 @@ estimateFPFH (const PointCloud<PointXYZ>::Ptr &src,
   PCLPointCloud2 s, t, out;
   toPCLPointCloud2 (*keypoints_src, s); toPCLPointCloud2 (fpfhs_src, t); concatenateFields (s, t, out);
   savePCDFile ("fpfhs_src.pcd", out);
+  savePLYFile ("fpfhs_src.ply", out);
   toPCLPointCloud2 (*keypoints_tgt, s); toPCLPointCloud2 (fpfhs_tgt, t); concatenateFields (s, t, out);
   savePCDFile ("fpfhs_tgt.pcd", out);
+  savePLYFile ("fpfhs_tgt.ply", out);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
