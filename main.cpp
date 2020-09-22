@@ -42,9 +42,6 @@ using namespace pcl;
 using namespace pcl::io;
 using namespace pcl::console;
 using namespace pcl::registration;
-PointCloud<PointXYZ>::Ptr src, tgt, rot, temp;
-gp_Ax3 src_ax, tgt_ax, src_pca, tgt_pca;
-
 ////////////////////////////////////////////////////////////////////////////////
 
 struct point
@@ -52,8 +49,6 @@ struct point
     point(double x, double y, double z) : x(x), y(y), z(z) {}
     double x, y, z;
 };
-
-QVector<point> srcPoints, tgtPoints, rotPoints;
 
 struct eulerAngles
 {
@@ -63,16 +58,12 @@ struct eulerAngles
 };
 
 ////////////////////////////////////////////////////////////////////////////////
+PointCloud<PointXYZ>::Ptr src, tgt, src_rot, result, temp, src_mir;
+QVector<point> srcPoints, tgtPoints, rotPoints;
+
+gp_Ax3 src_ax, tgt_ax, src_pca_ax, tgt_pca_ax;
 eulerAngles srcAngles, tgtAngles, rotAngles, outAngles;
 
-QMatrix3x3 *srcMatrix = nullptr;
-QMatrix3x3 *tgtMatrix = nullptr;
-QMatrix3x3 *rotMatrix = nullptr;
-QMatrix3x3 *outMatrix = nullptr;
-
-QVector3D vecA(0, 0, 1);
-QVector3D vecB(0, 1, 0);
-QVector3D vecC(1, 0, 0);
 ///////////////////////////////////////////////////////////////////////////////////
 
 void AddGausssianNoise (const PointCloud<PointXYZ>::ConstPtr &xyz_cloud, PointCloud<PointXYZ>::Ptr &xyz_cloud_filtered, float mean, float standard_deviation)
@@ -208,7 +199,7 @@ void LoadFromStlFile(QString filename, QVector<point> &points)
     Simplification(points);
 }
 
-void RotatePoints(QVector<point> &sourcePoints, QVector<point> &rotatePoints, const float angle, QVector3D &rotVec)
+void RotatePoints(QVector<point> &sourcePoints, QVector<point> &rotatePoints, const float angle, gp_Vec &rotVec)
 {
     double x, y, z;
     double mean_x = 0;
@@ -227,11 +218,9 @@ void RotatePoints(QVector<point> &sourcePoints, QVector<point> &rotatePoints, co
     mean_y /= sourcePoints.length();
     mean_z /= sourcePoints.length();
 
-    qDebug() << "mean" << mean_x << mean_y << mean_z;
-
     gp_Trsf trsf;
 
-    trsf.SetRotation(gp_Ax1(gp_Pnt(mean_x, mean_y, mean_z),gp_Vec(rotVec.x(),rotVec.y(),rotVec.z())), angle / 180 * PI);
+    trsf.SetRotation(gp_Ax1(gp_Pnt(mean_x, mean_y, mean_z), rotVec), angle / 180 * PI);
 
     for (auto p: sourcePoints)
     {
@@ -245,30 +234,9 @@ void RotatePoints(QVector<point> &sourcePoints, QVector<point> &rotatePoints, co
 
         rotatePoints.push_back(point(x, y, z));
     }
-
-//    QMatrix4x4 trsf;
-
-//    trsf.translate(mean_x, mean_y, mean_z);
-//    trsf.rotate(angle, rotVec);
-//    trsf.translate(-mean_x, -mean_y, -mean_z);
-
-//    for (auto p: sourcePoints)
-//    {
-//        QMatrix4x4 mat(0, 0, 0, p.x,
-//                       0, 0, 0, p.y,
-//                       0, 0, 0, p.z,
-//                       0, 0, 0, 1);
-//        mat = trsf * mat;
-
-//        x = mat(0, 3);
-//        y = mat(1, 3);
-//        z = mat(2, 3);
-
-//        rotatePoints.push_back(point(x, y, z));
-//    }
 }
 
-void RotatePoints(PointCloud<PointXYZ>::Ptr &sourcePoints, PointCloud<PointXYZ>::Ptr &rotatePoints, const float angle, QVector3D &rotVec)
+void RotatePoints(PointCloud<PointXYZ>::Ptr &sourcePoints, PointCloud<PointXYZ>::Ptr &rotatePoints, const float angle, const gp_Vec &rotVec)
 {
     double x, y, z;
     double mean_x = 0;
@@ -287,11 +255,9 @@ void RotatePoints(PointCloud<PointXYZ>::Ptr &sourcePoints, PointCloud<PointXYZ>:
     mean_y /= sourcePoints->size();
     mean_z /= sourcePoints->size();
 
-    qDebug() << "mean" << mean_x << mean_y << mean_z;
-
     gp_Trsf trsf;
 
-    trsf.SetRotation(gp_Ax1(gp_Pnt(mean_x, mean_y, mean_z),gp_Vec(rotVec.x(),rotVec.y(),rotVec.z())), angle / 180 * PI);
+    trsf.SetRotation(gp_Ax1(gp_Pnt(mean_x, mean_y, mean_z), rotVec), angle / 180 * PI);
 
     for (auto p: *sourcePoints)
     {
@@ -305,29 +271,7 @@ void RotatePoints(PointCloud<PointXYZ>::Ptr &sourcePoints, PointCloud<PointXYZ>:
 
         rotatePoints->push_back(PointXYZ(x, y, z));
     }
-
-//    QMatrix4x4 trsf;
-
-//    trsf.translate(mean_x, mean_y, mean_z);
-//    trsf.rotate(angle, rotVec);
-//    trsf.translate(-mean_x, -mean_y, -mean_z);
-
-//    for (auto p: *sourcePoints)
-//    {
-//        QMatrix4x4 mat(0, 0, 0, p.x,
-//                       0, 0, 0, p.y,
-//                       0, 0, 0, p.z,
-//                       0, 0, 0, 1);
-//        mat = trsf * mat;
-
-//        x = mat(0, 3);
-//        y = mat(1, 3);
-//        z = mat(2, 3);
-
-//        rotatePoints->push_back(PointXYZ(x, y, z));
-//    }
 }
-
 
 
 void Points2CloudPtr(QVector<point> &points, PointCloud<PointXYZ>::Ptr &cloud)
@@ -338,56 +282,6 @@ void Points2CloudPtr(QVector<point> &points, PointCloud<PointXYZ>::Ptr &cloud)
     {
         cloud->push_back(PointXYZ(p.x, p.y, p.z));
     }
-}
-
-void PcaTest(PointCloud<PointXYZ>::Ptr &points, QMatrix3x3 **matrix)
-{
-    alglib::real_2d_array ptInput;
-    QVector<double> p;
-
-    for (auto i: *points)
-    {
-        p.append(i.x);
-        p.append(i.y);
-        p.append(i.z);
-    }
-
-    QTime time;
-    time.start();
-
-    ptInput.setcontent(points->size(), 3, p.data());
-    alglib::ae_int_t info;
-    alglib::real_1d_array eigValues;
-    alglib::real_2d_array eigVectors;
-
-    alglib::pcabuildbasis(ptInput, points->size(), 3, info, eigValues, eigVectors);
-
-    qDebug() << "Pca test time :" << time.elapsed()/1000.0;
-
-    // now the vectors can be accessed as follows:
-
-    double basis0_x = eigVectors[0][0];
-    double basis0_y = eigVectors[1][0];
-    double basis0_z = eigVectors[2][0];
-
-    double basis1_x = eigVectors[0][1];
-    double basis1_y = eigVectors[1][1];
-    double basis1_z = eigVectors[2][1];
-
-    double basis2_x = eigVectors[0][2];
-    double basis2_y = eigVectors[1][2];
-    double basis2_z = eigVectors[2][2];
-
-    float vectors [] = { basis0_x , basis0_y , basis0_z,
-                         basis1_x , basis1_y , basis1_z,
-                         basis2_x , basis2_y , basis2_z};
-
-    if(*matrix != nullptr)
-        delete *matrix;
-
-    *matrix = new QMatrix3x3(vectors);
-
-    qDebug() << **matrix;
 }
 
 void PcaTest(PointCloud<PointXYZ>::Ptr &points, gp_Ax3 &ax_pca)
@@ -452,44 +346,33 @@ void PcaTest(PointCloud<PointXYZ>::Ptr &points, gp_Ax3 &ax_pca)
 
 void vec2euler(QMatrix3x3* ptrMatrix, eulerAngles &e)
 {
-    try
+    auto &m = *ptrMatrix;
+    if (m(0, 2) < +1)
     {
-        auto &m = *ptrMatrix;
-        if (m(0, 2) < +1)
-        {
-         if (m(0, 2) > -1)
-         {
-          e.B = asin(m(0, 2));
-          e.C = atan2(-m(1, 2),m(2, 2));
-          e.A = atan2(-m(0, 1),m(0, 0));
-         }
-         else // r02 = -1
-         {
-          // Not a unique solution: thetaZ - thetaX = atan2(r10,r11)
-          e.B = -PI/2;
-          e.C = -atan2(m(1, 0),m(1, 1));
-          e.A = 0;
-         }
-        }
-        else // r02 = +1
-        {
-         // Not a unique solution: thetaZ + thetaX = atan2(r10,r11)
-         e.B = +PI/2;
-         e.C = atan2(m(1, 0),m(1, 1));
-         e.A = 0;
-        }
+     if (m(0, 2) > -1)
+     {
+      e.B = asin(m(0, 2));
+      e.C = atan2(-m(1, 2),m(2, 2));
+      e.A = atan2(-m(0, 1),m(0, 0));
+     }
+     else // r02 = -1
+     {
+      // Not a unique solution: thetaZ - thetaX = atan2(r10,r11)
+      e.B = -PI/2;
+      e.C = -atan2(m(1, 0),m(1, 1));
+      e.A = 0;
+     }
     }
-
-    catch(...)
+    else // r02 = +1
     {
-
+     // Not a unique solution: thetaZ + thetaX = atan2(r10,r11)
+     e.B = +PI/2;
+     e.C = atan2(m(1, 0),m(1, 1));
+     e.A = 0;
     }
-
     e.A *= 180/PI;
     e.B *= 180/PI;
     e.C *= 180/PI;
-
-    qDebug() << QString("A: %1, B: %2, C: %3").arg(e.A).arg(e.B).arg(e.C);
 }
 
 void CalculateError(PointCloud<PointXYZ>::Ptr& src, PointCloud<PointXYZ>::Ptr& tgt)
@@ -516,94 +399,146 @@ void CalculateError(PointCloud<PointXYZ>::Ptr& src, PointCloud<PointXYZ>::Ptr& t
     qDebug() << "***********************************************************";
 }
 
+double CalculateMaxError(PointCloud<PointXYZ>::Ptr& src, PointCloud<PointXYZ>::Ptr& tgt)
+{
+    if(src->size() != tgt->size())
+        throw "Hatalı Değer Girildi";
+
+    QVector<double> distances;
+
+    auto size = src->size();
+    for(int i = 0; i < size; i++)
+    {
+        PointXYZ *srcPoint = src->data() + i;
+        PointXYZ *tgtPoint = tgt->data() + i;
+        double distance = sqrt(pow(srcPoint->x - tgtPoint->x, 2) + pow(srcPoint->y - tgtPoint->y, 2) + pow(srcPoint->z - tgtPoint->z, 2));
+        distances.push_back(distance);
+    }
+
+    return MathStatistics::max(distances);
+}
+
+void TransformationPointCloud(PointCloud<PointXYZ>::Ptr &source, PointCloud<PointXYZ>::Ptr &target, gp_Trsf &transform)
+{
+    target->clear();
+
+    for(auto p: *source)
+    {
+        gp_Pnt point(p.x, p.y, p.z);
+        point.Transform(transform);
+
+        target->push_back(PointXYZ(point.X(), point.Y(), point.Z()));
+    }
+}
+
+gp_Trsf* GetTransformOfPointCloud(PointCloud<PointXYZ>::Ptr &source, PointCloud<PointXYZ>::Ptr &target)
+{
+    PointCloud<PointXYZ>::Ptr temp, temp2;
+    temp.reset(new PointCloud<PointXYZ>());
+    temp2.reset(new PointCloud<PointXYZ>());
+    gp_Ax3 source_pca, target_pca;
+    PcaTest(source, source_pca);
+    PcaTest(target, target_pca);
+
+    gp_Trsf trsf, trsf_rot;
+    gp_Trsf *ret = new gp_Trsf();
+    trsf.SetDisplacement(source_pca, target_pca);
+    TransformationPointCloud(source, temp, trsf);
+
+    double min_error = CalculateMaxError(temp, target);
+
+    for (int i = 0; i < 360; i += 90)
+    {
+        for (int j = 0; j < 360; j += 90)
+        {
+                gp_Trsf t;
+                t.SetRotation(gp_Ax1(target_pca.Location(), target_pca.XDirection()), j * PI / 180);
+                t.SetRotation(gp_Ax1(target_pca.Location(), target_pca.YDirection()), i * PI / 180);
+
+                TransformationPointCloud(temp, temp2, t);
+
+                if(min_error > CalculateMaxError(temp2, target))
+                {
+                    min_error = CalculateMaxError(temp2, target);
+                    trsf_rot = t;
+                }
+        }
+    }
+
+    qDebug() << 5;
+
+    *ret *= trsf * trsf_rot;
+
+    qDebug() << 6;
+    return ret;
+}
+
 void init()
 {
-    QString srcPath = "E:\\Codes\\Dataset\\face.csv";
-    QString tgtPath = "E:\\Codes\\Dataset\\face_distorted.csv";
-
-    QString stlPath = "E:\\Codes\\Dataset\\Gyroid.stl";
-
     QString bunnyPath = "E:\\Codes\\Dataset\\Bunny.ply";
-
     PLYReader reader;
 
     src.reset (new PointCloud<PointXYZ>);
     tgt.reset (new PointCloud<PointXYZ>);
-    rot.reset (new PointCloud<PointXYZ>);
+    src_rot.reset (new PointCloud<PointXYZ>);
+    result.reset (new PointCloud<PointXYZ>);
     temp.reset (new PointCloud<PointXYZ>);
+    src_mir.reset (new PointCloud<PointXYZ>);
+
 
     reader.read(bunnyPath.toStdString(), *src);
 
     float angle = 180;
-    QVector3D vec(1, 1, 0);
+    gp_Vec vec(1, 1, 0);
 
     RotatePoints(src, tgt, angle, vec);
 
+    qDebug() << 1;
+
     *temp = *tgt;
 
-    AddGausssianNoise(temp, tgt, 0.0, 0.004);
+    AddGausssianNoise(temp, tgt, 0.0, 0.0025);
 
     savePLYFileBinary("src.ply", *src);
     savePLYFileBinary("tgt.ply", *tgt);
 
-////    LoadFromCsvFile(srcPath, srcPoints);
-////    LoadFromCsvFile(tgtPath, tgtPoints);
-////    qDebug() << "Load From CSV OK";
-////    qDebug() << "Source Lenght " << srcPoints.length();
-////    qDebug() << "Target Lenght " << tgtPoints.length();
-//    LoadFromStlFile(stlPath, srcPoints);
-//    RotatePoints(srcPoints, rotPoints, angle, vec);
-//    qDebug() << "Rotate OK";
-//    Points2CloudPtr(srcPoints, src);
-////    Points2CloudPtr(tgtPoints, tgt);
-//    Points2CloudPtr(rotPoints, tgt);
-//    qDebug() << "CloudPtr OK";
-
-    qDebug() << "test src";
-    PcaTest(src, &srcMatrix);
-    qDebug() << "test tgt";
-    PcaTest(tgt, &tgtMatrix);
-
     // Pca Test
-    PcaTest(src, src_pca);
-    PcaTest(tgt, tgt_pca);
+    PcaTest(src, src_pca_ax);
+    PcaTest(tgt, tgt_pca_ax);
 
-    qDebug() << "Angle : " << src_pca.Angle(tgt_pca) * 180 / PI;
-
-    vec2euler(srcMatrix, srcAngles);
-    vec2euler(tgtMatrix, tgtAngles);
+    qDebug() << "Angle : " << src_pca_ax.Angle(tgt_pca_ax) * 180 / PI;
 
     qDebug() << "Source Targer Error";
     CalculateError(src, tgt);
 
-    RotatePoints(src, rot, -srcAngles.B, vecB);
-    *temp = *rot;
-    RotatePoints(temp, rot, -srcAngles.C, vecC);
-    //    *temp = *rot;
-    //    RotatePoints(temp, rot, -srcAngles.C, vecC);
-    PcaTest(rot, &rotMatrix);
-    *src = *rot;
+    gp_Trsf trsf;
+    trsf.SetDisplacement(src_pca_ax, tgt_pca_ax);
+//    trsf.SetDisplacement(tgt_pca_ax, src_pca_ax);
+//    trsf.SetTransformation(src_pca_ax, tgt_pca_ax);
+//    trsf.SetTransformation(tgt_pca_ax, src_pca_ax);
 
-    RotatePoints(tgt, rot, -tgtAngles.B, vecB);
-    *temp = *rot;
-    RotatePoints(temp, rot, -tgtAngles.C, vecC);
-//    *temp = *rot;
-//    RotatePoints(temp, rot, -tgtAngles.C, vecC);
-    PcaTest(rot, &rotMatrix);
-    *tgt = *rot;
+    TransformationPointCloud(src, src_rot, trsf);
 
-    RotatePoints(tgt, rot, srcAngles.C, vecC);
-    *temp = *rot;
-    RotatePoints(temp, rot, srcAngles.B, vecB);
-//    *temp = *rot;
-//    RotatePoints(temp, rot, srcAngles.C, vecC);
-    PcaTest(rot, &rotMatrix);
-    *temp = *rot;
+    gp_Trsf* trsf3 = GetTransformOfPointCloud(src, tgt);
 
-    savePLYFileBinary("temp.ply", *temp);
+    gp_Trsf trsf2;
+//    trsf2.SetMirror(src_pca_ax.Location());
+    trsf2.SetMirror(src_pca_ax.Axis());
 
-    qDebug() << "Source Targer Error Çevirdikten Sonra";
-    CalculateError(src, tgt);
+    TransformationPointCloud(src_rot, src_mir, trsf2);
+
+    TransformationPointCloud(src, temp, *trsf3);
+
+
+    savePLYFileBinary("src_repair.ply", *temp);
+    savePLYFileBinary("src_rot.ply", *src_rot);
+    savePLYFileBinary("src_mir.ply", *src_mir);
+
+    qDebug() << "Source Target Error Çevirdikten Sonra";
+    CalculateError(src_rot, tgt);
+    qDebug() << "Source Target Error Çevirdikten Mirror Sonra";
+    CalculateError(src_mir, tgt);
+    *src = *src_rot;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -792,32 +727,16 @@ main (int argc, char** argv)
   Eigen::Matrix4f transform;
   computeTransformation (src, tgt, transform);
 
-  Eigen::Matrix4f rotate;
-
   qDebug() << "Transformasyon hesaplama süresi : " << time.elapsed() / 1000.0;
 
   std::cerr << transform << std::endl;
   // Transform the data and write it to disk
   PointCloud<PointXYZ> output;
-  PointCloud<PointXYZ>::Ptr out;
-  out.reset(new PointCloud<PointXYZ>);
 
   transformPointCloud (*src, output, transform);
-  transformPointCloud (*src, *out, transform);
-  savePLYFileBinary("source_transformed_pca.ply", output);
 
   qDebug() << time.elapsed() / 1000.0;
 
-  qDebug() << srcAngles.A << srcAngles.B << srcAngles.C;
-
-  RotatePoints(out, rot, srcAngles.C, vecC);
-  *temp = *rot;
-  RotatePoints(temp, rot, srcAngles.B, vecB);
-  *out = *rot;
-
   savePCDFileBinary ("source_transformed.pcd", output);
-  savePLYFileBinary("source_transformed.ply", output);
-
-  savePLYFileBinary("src_pca.ply", *src);
-  savePLYFileBinary("tgt_pca.ply", *tgt);
+  savePLYFileBinary ("source_transformed.ply", output);
 }
