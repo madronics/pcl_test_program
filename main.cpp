@@ -58,7 +58,7 @@ struct eulerAngles
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-PointCloud<PointXYZ>::Ptr src, tgt, src_rot, tgt_rot, src_rot_rot, tempCloud;
+PointCloud<PointXYZ>::Ptr src, tgt, src_rot, tgt_rot, src_rot_rot, src_cal, tempCloud;
 QVector<point> srcPoints, tgtPoints, rotPoints;
 
 gp_Ax3 src_pca_ax, tgt_pca_ax, src_rot_pca_ax;
@@ -338,9 +338,9 @@ void PcaTest(PointCloud<PointXYZ>::Ptr &points, gp_Ax3 &ax_pca)
     double basis2_z = eigVectors[2][2];
 
     ax_pca.SetLocation(gp_Pnt(mean_x, mean_y, mean_z));
-    ax_pca.SetDirection(gp_Dir(basis0_x, basis0_y, basis0_z));
     ax_pca.SetXDirection(gp_Dir(basis1_x, basis1_y, basis1_z));
     ax_pca.SetYDirection(gp_Dir(basis2_x, basis2_y, basis2_z));
+    ax_pca.SetDirection(gp_Dir(basis0_x, basis0_y, basis0_z));
 }
 
 void vec2euler(QMatrix3x3* ptrMatrix, eulerAngles &e)
@@ -411,6 +411,36 @@ void TransformationPointCloud(PointCloud<PointXYZ>::Ptr &source, PointCloud<Poin
     }
 }
 
+gp_Trsf CalculatePcaTransform(PointCloud<PointXYZ>::Ptr &source, PointCloud<PointXYZ>::Ptr &target)
+{
+    PointCloud<PointXYZ>::Ptr temp(new PointCloud<PointXYZ>());
+    gp_Trsf transform;
+    gp_Ax3 source_ax, target_ax, last_source_ax;
+
+    PcaTest(source, last_source_ax);
+    PcaTest(target, target_ax);
+
+    transform.SetDisplacement(last_source_ax, target_ax);
+    TransformationPointCloud(source, temp, transform);
+
+    while(true)
+    {
+        PcaTest(temp, source_ax);
+        if(last_source_ax.IsCoplanar(source_ax, 0.1, 0.5 * PI / 180))
+            break;
+        else
+        {
+            gp_Trsf t;
+            t.SetDisplacement(source_ax, target_ax);
+            transform.PreMultiply(t);
+            TransformationPointCloud(source, temp , transform);
+            last_source_ax = source_ax;
+        }
+    }
+
+    return transform;
+}
+
 void init()
 {
     QString bunnyPath = "E:\\Codes\\Dataset\\Bunny.ply";
@@ -421,13 +451,14 @@ void init()
     src_rot.reset (new PointCloud<PointXYZ>);
     tgt_rot.reset (new PointCloud<PointXYZ>);
     src_rot_rot.reset (new PointCloud<PointXYZ>);
+    src_cal.reset (new PointCloud<PointXYZ>);
     tempCloud.reset (new PointCloud<PointXYZ>);
 
 
     reader.read(bunnyPath.toStdString(), *src);
 
-    float angle = 320;
-    gp_Vec vec(0, -0.5, -0.75);
+    float angle = 330;
+    gp_Vec vec(1,-2,3);
 
     RotatePoints(src, tgt, angle, vec);
 
@@ -464,7 +495,11 @@ void init()
     trsf3.SetDisplacement(src_rot_pca_ax, tgt_pca_ax);
     TransformationPointCloud(src_rot, src_rot_rot, trsf3);
 
+    gp_Trsf trsf_cal = CalculatePcaTransform(src, tgt);
+    TransformationPointCloud(src, src_cal, trsf_cal);
+
     savePLYFileBinary("src_rot_rot.ply", *src_rot_rot);
+    savePLYFileBinary("src_cal.ply", *src_cal);
 
     qDebug() << "src_rot_pca_ax.Angle(tgt_rot_pca_ax) : " << src_rot_pca_ax.Angle(tgt_pca_ax) * 180 / PI;
 
