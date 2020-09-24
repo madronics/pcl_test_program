@@ -13,6 +13,17 @@
 #include <pcl/registration/correspondence_rejection_distance.h>
 #include <pcl/registration/transformation_estimation_svd.h>
 
+#include <pcl/sample_consensus/ransac.h>
+#include <pcl/sample_consensus/sac_model_registration.h>
+#include <pcl/sample_consensus/sac_model_plane.h>
+#include <pcl/sample_consensus/sac_model_sphere.h>
+#include <pcl/sample_consensus/sac_model_circle3d.h>
+#include <pcl/sample_consensus/sac_model_cone.h>
+#include <pcl/sample_consensus/sac_model_cylinder.h>
+
+#include <pcl/common/distances.h>
+#include <pcl/search/kdtree.h>
+
 #include <QString>
 #include <QFile>
 #include <QVector>
@@ -27,7 +38,7 @@
 #include "dataanalysis.h"
 
 #include "mathstatistics.h"
-
+#include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Ax1.hxx>
 #include <gp_Ax3.hxx>
@@ -61,7 +72,7 @@ struct eulerAngles
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-PointCloud<PointXYZ>::Ptr src, tgt, src_rot, tgt_rot, src_rot_rot, src_cal, tempCloud;
+PointCloud<PointXYZ>::Ptr src, tgt, src_rot, tgt_rot, src_rot_rot, src_cal, tempCloud, ransac_pt, src_king;
 QVector<point> srcPoints, tgtPoints, rotPoints;
 
 gp_Ax3 src_pca_ax, tgt_pca_ax, src_rot_pca_ax;
@@ -446,6 +457,152 @@ gp_Trsf CalculatePcaTransform(PointCloud<PointXYZ>::Ptr &source, PointCloud<Poin
     return transform;
 }
 
+void RansacPoints(PointCloud<PointXYZ>::Ptr &source, PointCloud<PointXYZ>::Ptr &target)
+{
+    PointCloud<PointXYZ>::Ptr temp(new PointCloud<PointXYZ>());
+
+    QTime time;
+
+    time.start();
+    std::vector<int> inliers;
+    bool random = false;
+
+    pcl::SampleConsensusModelRegistration<pcl::PointXYZ>::Ptr model_r(new pcl::SampleConsensusModelRegistration<pcl::PointXYZ> (source, random));
+    pcl::SampleConsensusModelSphere<pcl::PointXYZ>::Ptr model_s(new pcl::SampleConsensusModelSphere<pcl::PointXYZ> (source, random));
+    pcl::SampleConsensusModelPlane<pcl::PointXYZ>::Ptr model_p(new pcl::SampleConsensusModelPlane<pcl::PointXYZ> (source, random));
+
+    pcl::RandomSampleConsensus<pcl::PointXYZ> ransac (model_p);
+    ransac.setDistanceThreshold (10);
+    ransac.computeModel();
+    ransac.getInliers(inliers);
+
+    pcl::copyPointCloud (*source, inliers, *temp);
+
+    pcl::SampleConsensusModelCircle3D<pcl::PointXYZ>::Ptr model_circ(new pcl::SampleConsensusModelCircle3D<pcl::PointXYZ> (temp, random));
+
+    pcl::RandomSampleConsensus<pcl::PointXYZ> ransac2 (model_circ);
+    ransac2.setDistanceThreshold (5);
+    ransac2.computeModel();
+    ransac2.getInliers(inliers);
+
+    pcl::copyPointCloud (*temp, inliers, *target);
+
+    *target = *src;
+
+}
+
+double KdtreeTest(PointCloud<PointXYZ>::Ptr &source, PointCloud<PointXYZ>::Ptr &target)
+{
+    pcl::search::KdTree<PointXYZ> kdtree;
+    kdtree.setInputCloud (target);
+
+    unsigned int no_of_neighbors = 1;
+
+    std::vector<int> k_indices;
+    k_indices.resize (no_of_neighbors);
+    std::vector<float> k_distances;
+    k_distances.resize (no_of_neighbors);
+    QVector<double> distances;
+
+    for (const auto &point : *source)
+    {
+        kdtree.nearestKSearch (point, no_of_neighbors, k_indices, k_distances);
+//        qDebug() << "*******************************************";
+//        qDebug() << k_indices;
+//        qDebug() << k_distances;
+        distances.push_back(k_distances.at(0));
+
+//        qDebug() << gp_Pnt(point.x,point.y,point.z).Distance(gp_Pnt((*target)[k_indices.at(0)].x,(*target)[k_indices.at(0)].y,(*target)[k_indices.at(0)].z));
+    }
+
+    return MathStatistics::getMean(distances) + MathStatistics::getVariance(distances) * 3;
+}
+
+gp_Trsf GetBestTransform(PointCloud<PointXYZ>::Ptr &Source, PointCloud<PointXYZ>::Ptr &Target)
+{
+    PointCloud<PointXYZ>::Ptr temp(new PointCloud<PointXYZ>());
+    PointCloud<PointXYZ>::Ptr ransac_cloud(new PointCloud<PointXYZ>());
+    gp_Trsf transform, trsf_result;
+    gp_Ax3 source_ax, target_ax;
+    PcaTest(Source, source_ax);
+    PcaTest(Target, target_ax);
+
+    transform.SetDisplacement(source_ax, target_ax);
+    TransformationPointCloud(Source, temp, transform);
+    RansacPoints(temp, ransac_cloud);
+
+    double min_error = KdtreeTest(ransac_cloud, Target);
+    trsf_result = transform;
+
+    qDebug() << "Minimum X Y Z Rotasyonları" << 0 << 0 << 0;
+
+    for(int i = 0; i < 360; i += 90)
+    {
+        gp_Ax3 temp_ax = target_ax;
+        gp_Trsf x_rot;
+        x_rot.SetRotation(gp_Ax1(temp_ax.Location(), temp_ax.XDirection()), i);
+        temp_ax.Transform(x_rot);
+        for(int j = 0; j < 360; j += 90)
+        {
+            gp_Trsf y_rot;
+            y_rot.SetRotation(gp_Ax1(temp_ax.Location(), temp_ax.YDirection()), j);
+
+            gp_Trsf temp_trsf;
+            temp_trsf.PreMultiply(x_rot);
+            temp_trsf.PreMultiply(y_rot);
+
+            TransformationPointCloud(ransac_cloud, temp, temp_trsf);
+
+            double error = KdtreeTest(temp, Target);
+
+            if(error < min_error)
+            {
+                error = min_error;
+                gp_Trsf t;
+                t.PreMultiply(transform);
+                t.PreMultiply(temp_trsf);
+                trsf_result = t;
+
+                qDebug() << "Minimum X Y Z Rotasyonları" << i << j << 0;
+            }
+        }
+    }
+
+    for(int i = -90; i <= 90; i += 180)
+    {
+        gp_Ax3 temp_ax = target_ax;
+        gp_Trsf z_rot;
+        z_rot.SetRotation(gp_Ax1(temp_ax.Location(), temp_ax.XDirection().Crossed(temp_ax.YDirection())), i);
+        temp_ax.Transform(z_rot);
+        for(int j = 0; j < 360; j += 90)
+        {
+            gp_Trsf y_rot;
+            y_rot.SetRotation(gp_Ax1(temp_ax.Location(), temp_ax.YDirection()), j);
+
+            gp_Trsf temp_trsf;
+            temp_trsf.PreMultiply(z_rot);
+            temp_trsf.PreMultiply(y_rot);
+
+            TransformationPointCloud(ransac_cloud, temp, temp_trsf);
+
+            double error = KdtreeTest(temp, Target);
+
+            if(error < min_error)
+            {
+                error = min_error;
+                gp_Trsf t;
+                t.PreMultiply(transform);
+                t.PreMultiply(temp_trsf);
+                trsf_result = t;
+
+                qDebug() << "Minimum X Y Z Rotasyonları" << 0 << j << i;
+            }
+        }
+    }
+
+    return trsf_result;
+}
+
 void init()
 {
     QString bunnyPath = "E:\\Codes\\Dataset\\Bunny.ply";
@@ -458,14 +615,22 @@ void init()
     src_rot_rot.reset (new PointCloud<PointXYZ>);
     src_cal.reset (new PointCloud<PointXYZ>);
     tempCloud.reset (new PointCloud<PointXYZ>);
+    ransac_pt.reset (new PointCloud<PointXYZ>);
+    src_king.reset (new PointCloud<PointXYZ>);
+
+    gp_Trsf tscale;
+    tscale.SetScaleFactor(1000);
 
 
-    reader.read(bunnyPath.toStdString(), *src);
+
+    reader.read(bunnyPath.toStdString(), *tempCloud);
+
+    TransformationPointCloud(tempCloud, src, tscale);
 
     float angle = 330;
     gp_Vec vec(1,-2,3);
 
-//    float angle = 330;
+//    float angle = 180;
 //    gp_Vec vec(1,0,0);
 
     RotatePoints(src, tgt, angle, vec);
@@ -491,7 +656,7 @@ void init()
 
     *tempCloud = *tgt;
 
-//    AddGausssianNoise(tempCloud, tgt, 0.0, 0.0035);
+    AddGausssianNoise(tempCloud, tgt, 0.0, 2);
 
     savePLYFileBinary("src.ply", *src);
     savePLYFileBinary("tgt.ply", *tgt);
@@ -525,20 +690,26 @@ void init()
     gp_Trsf trsf_cal = CalculatePcaTransform(src, tgt);
     TransformationPointCloud(src, src_cal, trsf_cal);
 
+    gp_Trsf trsf_king = GetBestTransform(src, tgt);
+    TransformationPointCloud(src, src_king, trsf_king);
+
     gp_Quaternion q1 = trsf.GetRotation();
     gp_Quaternion q2 = t1.GetRotation();
     gp_Quaternion q3 = trsf_cal.GetRotation();
     gp_Quaternion q4 = trsf3.GetRotation();
+    gp_Quaternion q5 = trsf_king.GetRotation();
 
     double A1,B1,C1;
     double A2,B2,C2;
     double A3,B3,C3;
     double A4,B4,C4;
+    double A5,B5,C5;
 
     q1.GetEulerAngles(gp_Intrinsic_ZYX, A1, B1, C1);
     q2.GetEulerAngles(gp_Intrinsic_ZYX, A2, B2, C2);
     q3.GetEulerAngles(gp_Intrinsic_ZYX, A3, B3, C3);
     q4.GetEulerAngles(gp_Intrinsic_ZYX, A4, B4, C4);
+    q5.GetEulerAngles(gp_Intrinsic_ZYX, A5, B5, C5);
 
     A1 *= 180 / PI;
     B1 *= 180 / PI;
@@ -556,18 +727,31 @@ void init()
     B4 *= 180 / PI;
     C4 *= 180 / PI;
 
+    A5 *= 180 / PI;
+    B5 *= 180 / PI;
+    C5 *= 180 / PI;
+
     qDebug() << "PCA" << trsf.TranslationPart().X() << trsf.TranslationPart().Y() << trsf.TranslationPart().Z() << A1 << B1 << C1;
     qDebug() << "Target" << t1.TranslationPart().X() << t1.TranslationPart().Y() << t1.TranslationPart().Z() << A2 << B2 << C2;
     qDebug() << "trsf_cal" << trsf_cal.TranslationPart().X() << trsf_cal.TranslationPart().Y() << trsf_cal.TranslationPart().Z() << A3 << B3 << C3;
     qDebug() << "trsf3" << trsf3.TranslationPart().X() << trsf3.TranslationPart().Y() << trsf3.TranslationPart().Z() << A4 << B4 << C4;
+    qDebug() << "trsf_king" << trsf_king.TranslationPart().X() << trsf_king.TranslationPart().Y() << trsf_king.TranslationPart().Z() << A5 << B5 << C5;
 
     savePLYFileBinary("src_rot_rot.ply", *src_rot_rot);
     savePLYFileBinary("src_cal.ply", *src_cal);
+    savePLYFileBinary("src_king.ply", *src_king);
+
+
 
     qDebug() << "src_rot_pca_ax.Angle(tgt_rot_pca_ax) : " << src_rot_pca_ax.Angle(tgt_pca_ax) * 180 / PI;
 
     qDebug() << "Source Target Error Çevirdikten Sonra";
     CalculateError(src_rot, tgt);
+
+    RansacPoints(src_rot_rot, ransac_pt);
+    savePLYFileBinary("ransac_pt.ply", *ransac_pt);
+
+    qDebug() << "KdtreeTest" << KdtreeTest(ransac_pt, tgt);
 
     *src = *src_rot_rot;
 
