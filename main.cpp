@@ -487,8 +487,6 @@ void RansacPoints(PointCloud<PointXYZ>::Ptr &source, PointCloud<PointXYZ>::Ptr &
 
     pcl::copyPointCloud (*temp, inliers, *target);
 
-    *target = *src;
-
 }
 
 double KdtreeTest(PointCloud<PointXYZ>::Ptr &source, PointCloud<PointXYZ>::Ptr &target)
@@ -521,6 +519,7 @@ double KdtreeTest(PointCloud<PointXYZ>::Ptr &source, PointCloud<PointXYZ>::Ptr &
 gp_Trsf GetBestTransform(PointCloud<PointXYZ>::Ptr &Source, PointCloud<PointXYZ>::Ptr &Target)
 {
     PointCloud<PointXYZ>::Ptr temp(new PointCloud<PointXYZ>());
+    PointCloud<PointXYZ>::Ptr source_rot(new PointCloud<PointXYZ>());
     PointCloud<PointXYZ>::Ptr ransac_cloud(new PointCloud<PointXYZ>());
     gp_Trsf transform, trsf_result;
     gp_Ax3 source_ax, target_ax;
@@ -528,13 +527,15 @@ gp_Trsf GetBestTransform(PointCloud<PointXYZ>::Ptr &Source, PointCloud<PointXYZ>
     PcaTest(Target, target_ax);
 
     transform.SetDisplacement(source_ax, target_ax);
-    TransformationPointCloud(Source, temp, transform);
-    RansacPoints(temp, ransac_cloud);
+    TransformationPointCloud(Source, source_rot, transform);
+    RansacPoints(source_rot, ransac_cloud);
 
-    double min_error = KdtreeTest(ransac_cloud, Target);
+//    double min_error = KdtreeTest(ransac_cloud, Target);
+    double min_error = KdtreeTest(source_rot, Target);
     trsf_result = transform;
 
     qDebug() << "Minimum X Y Z Rotasyonları" << 0 << 0 << 0;
+    qDebug() << min_error;
 
     for(int i = 0; i < 360; i += 90)
     {
@@ -551,20 +552,29 @@ gp_Trsf GetBestTransform(PointCloud<PointXYZ>::Ptr &Source, PointCloud<PointXYZ>
             temp_trsf.PreMultiply(x_rot);
             temp_trsf.PreMultiply(y_rot);
 
-            TransformationPointCloud(ransac_cloud, temp, temp_trsf);
+//            TransformationPointCloud(ransac_cloud, temp, temp_trsf);
+            TransformationPointCloud(source_rot, temp, temp_trsf);
 
             double error = KdtreeTest(temp, Target);
+
+            gp_Trsf t;
+            t.PreMultiply(transform);
+            t.PreMultiply(temp_trsf);
 
             if(error < min_error)
             {
                 error = min_error;
-                gp_Trsf t;
-                t.PreMultiply(transform);
-                t.PreMultiply(temp_trsf);
                 trsf_result = t;
 
                 qDebug() << "Minimum X Y Z Rotasyonları" << i << j << 0;
             }
+            qDebug() << "*******************************************";
+            qDebug() << "X Y Z Rotasyonları" << i << j << 0;
+            qDebug() << "Kdtree error" << error;
+            qDebug() << "*******************************************";
+
+            savePLYFile(QString("source_rot_%0_%1_%2.ply").arg(i).arg(j).arg(0).toStdString(),*temp);
+
         }
     }
 
@@ -583,20 +593,28 @@ gp_Trsf GetBestTransform(PointCloud<PointXYZ>::Ptr &Source, PointCloud<PointXYZ>
             temp_trsf.PreMultiply(z_rot);
             temp_trsf.PreMultiply(y_rot);
 
-            TransformationPointCloud(ransac_cloud, temp, temp_trsf);
+//            TransformationPointCloud(ransac_cloud, temp, temp_trsf);
+            TransformationPointCloud(source_rot, temp, temp_trsf);
 
             double error = KdtreeTest(temp, Target);
+
+            gp_Trsf t;
+            t.PreMultiply(transform);
+            t.PreMultiply(temp_trsf);
 
             if(error < min_error)
             {
                 error = min_error;
-                gp_Trsf t;
-                t.PreMultiply(transform);
-                t.PreMultiply(temp_trsf);
                 trsf_result = t;
 
                 qDebug() << "Minimum X Y Z Rotasyonları" << 0 << j << i;
             }
+
+            qDebug() << "*******************************************";
+            qDebug() << "X Y Z Rotasyonları" << 0 << j << i;
+            qDebug() << "Kdtree error" << error;
+
+            savePLYFile(QString("source_rot_%0_%1_%2.ply").arg(0).arg(j).arg(i).toStdString(),*temp);
         }
     }
 
@@ -679,7 +697,6 @@ void init()
     TransformationPointCloud(tgt, tgt_rot, trsf2);
 
     savePLYFileBinary("src_rot.ply", *src_rot);
-    savePLYFileBinary("tgt_rot.ply", *tgt_rot);
 
     PcaTest(src_rot, src_rot_pca_ax);
 
@@ -690,8 +707,8 @@ void init()
     gp_Trsf trsf_cal = CalculatePcaTransform(src, tgt);
     TransformationPointCloud(src, src_cal, trsf_cal);
 
-    gp_Trsf trsf_king = GetBestTransform(src, tgt);
-    TransformationPointCloud(src, src_king, trsf_king);
+    gp_Trsf trsf_king = GetBestTransform(src_cal, tgt);
+    TransformationPointCloud(src_cal, src_king, trsf_king);
 
     gp_Quaternion q1 = trsf.GetRotation();
     gp_Quaternion q2 = t1.GetRotation();
@@ -778,8 +795,6 @@ estimateKeypoints (const PointCloud<PointXYZ>::Ptr &src,
   // pcl_viewer source_pcd keypoints_src.pcd -ps 1 -ps 10
   savePCDFileBinary ("keypoints_src.pcd", keypoints_src);
   savePCDFileBinary ("keypoints_tgt.pcd", keypoints_tgt);
-  savePLYFileBinary ("keypoints_src.ply", keypoints_src);
-  savePLYFileBinary ("keypoints_tgt.ply", keypoints_tgt);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -806,8 +821,6 @@ estimateNormals (const PointCloud<PointXYZ>::Ptr &src,
   copyPointCloud (normals_tgt, t);
   savePCDFileBinary ("normals_src.pcd", s);
   savePCDFileBinary ("normals_tgt.pcd", t);
-  savePLYFileBinary ("normals_tgt.ply", t);
-  savePLYFileBinary ("normals_src.ply", s);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -838,10 +851,8 @@ estimateFPFH (const PointCloud<PointXYZ>::Ptr &src,
   PCLPointCloud2 s, t, out;
   toPCLPointCloud2 (*keypoints_src, s); toPCLPointCloud2 (fpfhs_src, t); concatenateFields (s, t, out);
   savePCDFile ("fpfhs_src.pcd", out);
-  savePLYFile ("fpfhs_src.ply", out);
   toPCLPointCloud2 (*keypoints_tgt, s); toPCLPointCloud2 (fpfhs_tgt, t); concatenateFields (s, t, out);
   savePCDFile ("fpfhs_tgt.pcd", out);
-  savePLYFile ("fpfhs_tgt.ply", out);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
