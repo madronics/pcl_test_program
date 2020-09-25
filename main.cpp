@@ -541,12 +541,12 @@ gp_Trsf GetBestTransform(PointCloud<PointXYZ>::Ptr &Source, PointCloud<PointXYZ>
     {
         gp_Ax3 temp_ax = target_ax;
         gp_Trsf x_rot;
-        x_rot.SetRotation(gp_Ax1(temp_ax.Location(), temp_ax.XDirection()), i);
+        x_rot.SetRotation(gp_Ax1(temp_ax.Location(), temp_ax.XDirection()), i * PI / 180);
         temp_ax.Transform(x_rot);
         for(int j = 0; j < 360; j += 90)
         {
             gp_Trsf y_rot;
-            y_rot.SetRotation(gp_Ax1(temp_ax.Location(), temp_ax.YDirection()), j);
+            y_rot.SetRotation(gp_Ax1(temp_ax.Location(), temp_ax.YDirection()), j * PI / 180);
 
             gp_Trsf temp_trsf;
             temp_trsf.PreMultiply(x_rot);
@@ -579,15 +579,16 @@ gp_Trsf GetBestTransform(PointCloud<PointXYZ>::Ptr &Source, PointCloud<PointXYZ>
     }
 
     for(int i = -90; i <= 90; i += 180)
+//    for(int i = 0; i < 360; i += 90)
     {
         gp_Ax3 temp_ax = target_ax;
         gp_Trsf z_rot;
-        z_rot.SetRotation(gp_Ax1(temp_ax.Location(), temp_ax.XDirection().Crossed(temp_ax.YDirection())), i);
+        z_rot.SetRotation(gp_Ax1(temp_ax.Location(), temp_ax.Direction()), i * PI / 180);
         temp_ax.Transform(z_rot);
         for(int j = 0; j < 360; j += 90)
         {
             gp_Trsf y_rot;
-            y_rot.SetRotation(gp_Ax1(temp_ax.Location(), temp_ax.YDirection()), j);
+            y_rot.SetRotation(gp_Ax1(temp_ax.Location(), temp_ax.YDirection()), j * PI / 180);
 
             gp_Trsf temp_trsf;
             temp_trsf.PreMultiply(z_rot);
@@ -707,8 +708,8 @@ void init()
     gp_Trsf trsf_cal = CalculatePcaTransform(src, tgt);
     TransformationPointCloud(src, src_cal, trsf_cal);
 
-    gp_Trsf trsf_king = GetBestTransform(src_cal, tgt);
-    TransformationPointCloud(src_cal, src_king, trsf_king);
+    gp_Trsf trsf_king = GetBestTransform(src, tgt);
+    TransformationPointCloud(src, src_king, trsf_king);
 
     gp_Quaternion q1 = trsf.GetRotation();
     gp_Quaternion q2 = t1.GetRotation();
