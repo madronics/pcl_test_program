@@ -363,6 +363,68 @@ void PcaTest(PointCloud<PointXYZ>::Ptr &points, gp_Ax3 &ax_pca)
     ax_pca = temp_ax;
 }
 
+void PcaTest(PointCloud<PointXYZ>::Ptr &points, gp_Pnt &mean_pt ,QVector<gp_Dir> &dir)
+{
+    double mean_x = 0;
+    double mean_y = 0;
+    double mean_z = 0;
+
+    for (auto p: *points)
+    {
+        mean_x += p.x;
+        mean_y += p.y;
+        mean_z += p.z;
+    }
+
+    mean_x /= points->size();
+    mean_y /= points->size();
+    mean_z /= points->size();
+
+//    qDebug() << "mean" << mean_x << mean_y << mean_z;
+    alglib::real_2d_array ptInput;
+    QVector<double> p;
+
+    for (auto i: *points)
+    {
+        p.append(i.x);
+        p.append(i.y);
+        p.append(i.z);
+    }
+
+    QTime time;
+    time.start();
+
+    ptInput.setcontent(points->size(), 3, p.data());
+    alglib::ae_int_t info;
+    alglib::real_1d_array eigValues;
+    alglib::real_2d_array eigVectors;
+
+    alglib::pcabuildbasis(ptInput, points->size(), 3, info, eigValues, eigVectors);
+
+//    qDebug() << "Pca test time :" << time.elapsed()/1000.0;
+
+    // now the vectors can be accessed as follows:
+
+    double basis0_x = eigVectors[0][0];
+    double basis0_y = eigVectors[1][0];
+    double basis0_z = eigVectors[2][0];
+
+    double basis1_x = eigVectors[0][1];
+    double basis1_y = eigVectors[1][1];
+    double basis1_z = eigVectors[2][1];
+
+    double basis2_x = eigVectors[0][2];
+    double basis2_y = eigVectors[1][2];
+    double basis2_z = eigVectors[2][2];
+
+    mean_pt.SetXYZ(gp_XYZ(mean_x, mean_y, mean_z));
+
+    dir.clear();
+    dir.push_back(gp_Dir(basis0_x, basis0_y, basis0_z));
+    dir.push_back(gp_Dir(basis1_x, basis1_y, basis1_z));
+    dir.push_back(gp_Dir(basis2_x, basis2_y, basis2_z));
+}
+
 void vec2euler(QMatrix3x3* ptrMatrix, eulerAngles &e)
 {
     auto &m = *ptrMatrix;
@@ -576,6 +638,73 @@ gp_Trsf GetBestTransform(PointCloud<PointXYZ>::Ptr &Source, PointCloud<PointXYZ>
     return trsf_result;
 }
 
+gp_Trsf Evren(PointCloud<PointXYZ>::Ptr &source, PointCloud<PointXYZ>::Ptr target)
+{
+    PointCloud<PointXYZ>::Ptr source_rot;
+    source_rot.reset(new PointCloud<PointXYZ>());
+    gp_Pnt source_mean_pt;
+    QVector<gp_Dir> source_vec;
+    QVector<gp_Ax3> source_ax_vec;
+    gp_Ax3 target_ax;
+
+    gp_Trsf result;
+    double min_error = KdtreeTest(source, target);
+
+    PcaTest(source, source_mean_pt, source_vec);
+    PcaTest(target, target_ax);
+
+    for (int i = 0; i < 3; ++i)
+    {
+        for (int j = 0; j < 3; ++j)
+        {
+            if(i == j)
+                continue;
+            gp_Ax3 ax(source_mean_pt,source_vec.at(i),source_vec.at(j));
+            for (int k = 0; k < 8; ++k)
+            {
+                gp_Ax3 temp_ax = ax;
+                int temp = k;
+                if(temp % 2 == 1)
+                    temp_ax.XReverse();
+                if(temp % 2 == 1)
+                    temp_ax.YReverse();
+                temp >>= 1;
+                if(temp % 2 == 1)
+                    temp_ax.ZReverse();
+                source_ax_vec.push_back(temp_ax);
+            }
+        }
+    }
+
+
+    for(auto source_ax: source_ax_vec)
+    {
+        gp_Trsf trsf;
+        trsf.SetDisplacement(source_ax, target_ax);
+
+//        gp_Ax3 temp_ax = source_ax;
+//        temp_ax.Transform(trsf);
+
+//        if(!temp_ax.IsCoplanar(target_ax, 0.01, 0.01))
+//        {
+//            qDebug() << "temp ax " << temp_ax.Location().X() << temp_ax.Location().Y() << temp_ax.Location().Z();
+//            qDebug() << "target ax " << target_ax.Location().X() << target_ax.Location().Y() << target_ax.Location().Z();
+//        }
+
+
+        TransformationPointCloud(source, source_rot, trsf);
+        double error = KdtreeTest(source_rot,target);
+
+        if(error < min_error)
+        {
+            min_error = error;
+            result = trsf;
+        }
+
+    }
+    return result;
+}
+
 void TestProgram()
 {
     QString bunnyPath = "E:\\Codes\\Dataset\\Bunny.ply";
@@ -624,6 +753,7 @@ void TestProgram()
         qDebug() << "*******************************************";
 
         gp_Vec vec(x, y, z);
+        vec.Normalize();
 
         gp_Ax1 ax(gp_Pnt(mean_x, mean_y, mean_z), vec);
 
@@ -635,7 +765,8 @@ void TestProgram()
 //            RotatePoints(source, target, i, vec);
 //            RotatePoints(source, temp, i, vec);
 //            AddGausssianNoise(temp, target, 0, 1.5);
-            gp_Trsf transform = GetBestTransform(source, target);
+//            gp_Trsf transform = GetBestTransform(source, target);
+            gp_Trsf transform = Evren(source, target);
             TransformationPointCloud(source, source_result, transform);
 
             int error = KdtreeTest(source_result, target);
@@ -696,7 +827,8 @@ void TestProgram()
 //            RotatePoints(source, target, i, vec);
 //            RotatePoints(source, temp, i, vec);
 //            AddGausssianNoise(temp, target, 0, 1.5);
-            gp_Trsf transform = GetBestTransform(source, target);
+//            gp_Trsf transform = GetBestTransform(source, target);
+            gp_Trsf transform = Evren(source, target);
             TransformationPointCloud(source, source_result, transform);
 
             int error = KdtreeTest(source_result, target);
