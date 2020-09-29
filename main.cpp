@@ -774,14 +774,14 @@ void Test()
     gp_Trsf transform = Evren(src, tgt);
     TransformationPointCloud(src, tempCloud, transform);
 
-//    *src = *tempCloud;
+    *src = *tempCloud;
 
-    int error = KdtreeTest(src, tgt);
+    double error = KdtreeTest(src, tgt);
 
     savePLYFileBinary("src.ply", *src);
     savePLYFileBinary("tgt.ply", *tgt);
 
-    qDebug() << error;
+    qDebug() << "Src error " << error;
 }
 
 void TestProgram()
@@ -1051,6 +1051,8 @@ void init()
 
 }
 
+
+int x = 28;
 ////////////////////////////////////////////////////////////////////////////////
 void
 estimateKeypoints (const PointCloud<PointXYZ>::Ptr &src,
@@ -1060,7 +1062,7 @@ estimateKeypoints (const PointCloud<PointXYZ>::Ptr &src,
 {
   // Get an uniform grid of keypoints
   UniformSampling<PointXYZ> uniform;
-  uniform.setRadiusSearch (1);  // 1m
+  uniform.setRadiusSearch (1 * x);  // 1m
 
   uniform.setInputCloud (src);
   uniform.filter (keypoints_src);
@@ -1083,7 +1085,7 @@ estimateNormals (const PointCloud<PointXYZ>::Ptr &src,
 {
   NormalEstimation<PointXYZ, Normal> normal_est;
   normal_est.setInputCloud (src);
-  normal_est.setRadiusSearch (0.5);  // 50cm
+  normal_est.setRadiusSearch (0.5 * x);  // 50cm
   normal_est.compute (normals_src);
 
   normal_est.setInputCloud (tgt);
@@ -1114,7 +1116,7 @@ estimateFPFH (const PointCloud<PointXYZ>::Ptr &src,
   FPFHEstimation<PointXYZ, Normal, FPFHSignature33> fpfh_est;
   fpfh_est.setInputCloud (keypoints_src);
   fpfh_est.setInputNormals (normals_src);
-  fpfh_est.setRadiusSearch (1); // 1m
+  fpfh_est.setRadiusSearch (1 * x); // 1m
   fpfh_est.setSearchSurface (src);
   fpfh_est.compute (fpfhs_src);
 
@@ -1154,7 +1156,7 @@ rejectBadCorrespondences (const CorrespondencesPtr &all_correspondences,
   CorrespondenceRejectorDistance rej;
   rej.setInputSource<PointXYZ> (keypoints_src);
   rej.setInputTarget<PointXYZ> (keypoints_tgt);
-  rej.setMaximumDistance (1);    // 1m
+  rej.setMaximumDistance (1 * x);    // 1m
   rej.setInputCorrespondences (all_correspondences);
   rej.getCorrespondences (remaining_correspondences);
 }
@@ -1215,7 +1217,6 @@ main (int argc, char** argv)
   QTime time;
   time.start();
   Eigen::Matrix4f transform;
-  std::cerr << transform << std::endl;
 
   computeTransformation (src, tgt, transform);
 
@@ -1224,11 +1225,16 @@ main (int argc, char** argv)
   std::cerr << transform << std::endl;
   // Transform the data and write it to disk
   PointCloud<PointXYZ> output;
+  PointCloud<PointXYZ>::Ptr out;
 
-  transformPointCloud (*src, output, transform);
+  out.reset(new PointCloud<PointXYZ>);
+
+  transformPointCloud (*src, *out, transform);
 
   qDebug() << time.elapsed() / 1000.0;
 
-  savePCDFileBinary ("source_transformed.pcd", output);
-  savePLYFile("source_transformed.ply", output);
+  qDebug() << "out error" << KdtreeTest(out, tgt);
+
+  savePCDFileBinary ("source_transformed.pcd", *out);
+  savePLYFileBinary ("source_transformed.ply", *out);
 }
